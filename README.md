@@ -9,5 +9,5 @@ The goal is by applying machine learning algorithms to these data to predict the
 of exercise, and estimate the out-of-sample errors. The result of this analysis confirms 
 that random forest prediction achieves a higher accuracy than other three algorithms.
 
-You can visit the project report [here](http://rpubs.com/lifeng/147803)
+You can visit the project report [here](http://rpubs.com/lifeng/147803).
 
