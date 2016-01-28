@@ -1,0 +1,225 @@
+---
+title: "Weight Lifting Exercise Prediction"
+output: html_document
+---
+### Practical Machine Learning Course Project
+
+*Feng Li*
+
+*28 Jan 2016*
+
+### Exective Summary
+
+This project will explore the Weight Lifting Excercises dataset. Six subjects participated in a dumbell lifting excercise in five different ways (identified as classe A, B, C, D, E), and data are gathered from accelerometers on the belt, forearm, arm, and dumbell. You can download it and learn more from [here](http://groupware.les.inf.puc-rio.br/har).
+
+The goal is by applying machine learning algorithms to these data to predict the manner of exercise, and estimate the out-of-sample errors. The result of this analysis confirms that random forest prediction achieves a higher accuracy than other three algorithms.
+
+
+### Data Processing
+
+After downloading the dataset from the website, we perform a set of preprocessing to the training dataset. 
+
+1. remove all the variables which contain missing/empty values;
+2. drop the first 7 variables that are not related to this analysis;
+3. check for covariates with nero zero variability;
+4. eliminate variables which are highly correlated using function `findCorrelation` (set threshold 0.9).
+
+ After data processing, there are 46 columns left
+ (including the outcome `classe`) in the training dataset. Then we subset the test data by only keeping variables in the training data.
+
+
+```{r, echo=FALSE, cache=TRUE, message=FALSE, warning=FALSE}
+pmlTrainingRaw<- read.csv("pml-training.csv", header = TRUE,
+                       na.strings = c("NA", ""))
+pmlTestingRaw<- read.csv("pml-testing.csv", header = TRUE,
+                      na.strings = c("NA", ""))
+
+# remove all the variables with NAs
+pmlTraining<- pmlTrainingRaw[, colSums(is.na(pmlTrainingRaw)) == 0]
+pmlTesting<- pmlTestingRaw[, colSums(is.na(pmlTestingRaw)) == 0]
+
+# remove variables related to time series and IDs
+pmlTraining<- pmlTraining[,-(1:7)]
+
+# drop variables with near zero variance
+library(caret)
+nzvData<- nearZeroVar(pmlTraining, saveMetrics = TRUE)
+
+# find the columns with absolute correlation >= 0.9, excluding the factor outcome
+highCor<- findCorrelation(cor(pmlTraining[,-53]), cutoff = 0.9)
+pmlTraining<- pmlTraining[,-highCor]
+
+# subset test data by keeping only the variables in the training data
+pmlTesting<- pmlTesting[,(names(pmlTesting) %in% names(pmlTraining[,-53]))]
+dim(pmlTraining)
+dim(pmlTesting)
+```
+
+We are provided with a large training dataset (19622 observations) and a small test dataset(20 observations). Instead of performing the training algorithm on the entire training dataset, as it would be time consuming and wouldn't allow for multiple validation, we divide the given training dataset into four roughly equal sets. Then we split each of them into a training set (60%) and a testing set (40%). In each step, we set the seed equal to 110.
+
+```{r, echo=FALSE, cache=TRUE}
+# divide the given training set into 4 small sets
+set.seed(110)
+inTrain1<- createDataPartition(y = pmlTraining$classe,
+                              p = 0.25, list = FALSE)
+training1<- pmlTraining[inTrain1, ]
+trainRemd<- pmlTraining[-inTrain1,]
+
+set.seed(110)
+inTrain2<- createDataPartition(y = trainRemd$classe,
+                               p = 0.33, list = FALSE)
+training2<- trainRemd[inTrain2, ]
+trainRemd<- trainRemd[-inTrain2,]
+
+set.seed(110)
+inTrain3<- createDataPartition(y = trainRemd$classe,
+                               p = 0.5, list = FALSE)
+training3<- trainRemd[inTrain3, ]
+training4<- trainRemd[-inTrain3,]
+
+# divide each small data set into training and testing sets
+set.seed(110)
+myInTrain1<- createDataPartition(y = training1$classe,
+                              p=0.6, list = FALSE)
+myTraining1<- training1[myInTrain1,]
+myTesting1<-  training1[-myInTrain1,]
+
+set.seed(110)
+myInTrain2<- createDataPartition(y = training2$classe,
+                              p=0.6, list = FALSE)
+myTraining2<- training2[myInTrain2,]
+myTesting2<-  training2[-myInTrain2,]
+
+set.seed(110)
+myInTrain3<- createDataPartition(y = training3$classe,
+                              p=0.6, list = FALSE)
+myTraining3<- training3[myInTrain3,]
+myTesting3<-  training3[-myInTrain3,]
+
+set.seed(110)
+myInTrain4<- createDataPartition(y = training4$classe,
+                              p=0.6, list = FALSE)
+myTraining4<- training4[myInTrain4,]
+myTesting4<-  training4[-myInTrain4,]
+```
+
+### Machine Learning Algorithm: Classification Tree
+
+First we perform classification tree training, and we get a high out of sample error 51.1%, even higher than by chance. So we incorporate centering and scaling preprocessing and cross validation. But there is little improvement in prediction accuracy.
+
+```{r, echo = FALSE, cache=TRUE}
+library(rpart)
+model1<- train(myTraining1$classe ~., data = myTraining1,
+               method = "rpart")
+
+# out of sample error
+prediction1<- predict(model1, newdata = myTesting1)
+confusionMatrix(prediction1, myTesting1$classe)
+```
+
+### Machine Learning Algorithm: Support Vector Machine with Radial Basis Kernel Function
+
+The SVM model yields a relatively lower out of sample error 45.1%, but still not low enough.
+
+```{r, echo = FALSE, cache=TRUE, message=FALSE}
+library(kernlab)
+# predictors are obtained from a pca preprocessing with 5 components
+pca_svm<- preProcess(myTraining1, method = "pca",
+                     pcaComp = 5)
+myTrainingPca<- predict(pca_svm, myTraining1)
+
+# 5-fold cross validation
+model2<- train(myTraining1$classe ~., data = myTrainingPca,
+               method = "svmRadial", 
+               trControl = trainControl(method = "cv", number = 5))
+
+myTestingPca<- predict(pca_svm, myTesting1)
+prediction2<- predict(model2, myTestingPca)
+confusionMatrix(prediction2, myTesting1$classe)
+
+```
+
+### Machine Learning Algorithm: K-Nearest Neighbor
+
+The third algorithm we tried is KNN method. As the result shows, there is a much higher accuracy with this model, and the out of sample error is 27.8%.
+
+```{r, echo=FALSE, cache=TRUE}
+model3<- train(myTraining1$classe ~., data = myTraining1,
+              trControl = trainControl(method = "adaptive_cv"),
+              method = "knn")
+
+prediction3<- predict(model3, newdata = myTesting1)
+confusionMatrix(prediction3, myTesting1$classe)
+```
+
+### Machine Learning Algorithm: Random Forest
+
+Finally, we use random forest method, which can reduce overfitting and is good for nonlinear regression.
+
+The random forest model produces a 95.8% accuracy rate for test set, far higher than other models. With centering and scaling preprocessing, the accuracy rate is even higher, about 96.0%, as is shown below, And the sensitivity and specificity for all variables is in the high 90%.
+
+```{r, echo=FALSE, cache=TRUE}
+library(randomForest)
+# with only cross validation
+model4<- train(myTraining1$classe ~., data = myTraining1,
+               preProcess = c("center", "scale"),
+               trControl = trainControl(method = "cv", number = 4),
+               method = "rf")
+
+prediction4<- predict(model4, newdata = myTesting1)
+confusionMatrix(prediction4, myTesting1$classe)
+```
+
+
+To confirm further this model is superior in prediction accuracy, we apply it against other three small datasets. Plus the first prediction result, we get four out of sample error rate:
+
+1. training set 1: 0.0408
+2. training set 2: 0.0381
+3. training set 3: 0.0421
+4. training set 4: 0.0376
+
+So we use the model generated by the second and fourth data sets to predict on the given testing set, and get the corresponding predicted `classe` vector:
+
+1. training set 2 prediction: B A B A A C D B A A B C B A E E A B B B
+2. training set 4 prediciton: B A A A A E D B A A B C B A E E A B B B
+
+```{r, echo=FALSE, cache=TRUE}
+# same training method on the second small training set
+model5<- train(myTraining2$classe ~., data = myTraining2,
+               preProcess = c("center", "scale"),
+               trControl = trainControl(method = "cv", number = 4),
+               method = "rf")
+
+prediction5<- predict(model5, newdata = myTesting2)
+confusionMatrix(prediction5, myTesting2$classe)
+
+predict(model5, pmlTesting)
+```
+
+```{r, echo=FALSE, cache=TRUE}
+# same training method on the third small training set
+model6<- train(myTraining3$classe ~., data = myTraining3,
+               preProcess = c("center", "scale"),
+               trControl = trainControl(method = "cv", number = 4),
+               method = "rf")
+
+# predict on the third small testing set
+prediction6<- predict(model6, newdata = myTesting3)
+confusionMatrix(prediction6, myTesting3$classe)
+```
+
+```{r, echo=FALSE, cache=TRUE}
+# same training method on the fourth small training set
+model7<- train(myTraining4$classe ~., data = myTraining4,
+               preProcess = c("center", "scale"),
+               trControl = trainControl(method = "cv", number = 4),
+               method = "rf")
+# predict on the fourth small testing set
+prediction7<- predict(model7, newdata = myTesting4)
+confusionMatrix(prediction7, myTesting4$classe)
+
+predict(model7, pmlTesting)
+```
+
+
+
